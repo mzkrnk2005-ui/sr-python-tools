@@ -24,9 +24,9 @@ jobs:
             echo "✅ アクセス成功（スリープ防止済み）"
           fi
 
-      - name: 完全版（事業主負担あり）にアクセス
+      - name: 有料版（事業主負担あり）にアクセス
         run: |
-          URL="https://sr-insurance-calculator.streamlit.app/"
+          URL="https://sr-insurance-calc-x4m8q2r7.streamlit.app/"
           STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 60 "$URL" || echo "000")
           echo "ステータスコード: $STATUS"
           if [ "$STATUS" = "000" ]; then
@@ -34,4 +34,3 @@ jobs:
           else
             echo "✅ アクセス成功（スリープ防止済み）"
           fi
-

@@ -1,8 +1,8 @@
 """
-社会保険料一括計算ツール【無料版】（令和8年度）
+社会保険料一括計算ツール【有料版】（令和8年度）
 対象：社労士・HR担当・中小企業総務
 
-表示内容：従業員負担（控除額・手取り概算）
+表示内容：従業員負担＋事業主負担・人件費総額
 """
 
 import io
@@ -17,7 +17,7 @@ from calculator import fetch_rates, calc_dataframe, PREFS, KOYO_RATES_WORKER
 # ページ設定
 # ============================================================
 st.set_page_config(
-    page_title="社会保険料計算ツール（令和8年度）",
+    page_title="社会保険料計算ツール 完全版（令和8年度）",
     page_icon="📊",
     layout="wide",
 )
@@ -74,8 +74,8 @@ def to_excel(df_apr: pd.DataFrame, df_may: pd.DataFrame, cols: list) -> bytes:
 # ============================================================
 # メイン画面
 # ============================================================
-st.title("📊 社会保険料計算ツール【無料版】")
-st.caption("令和8年度 協会けんぽ対応｜複数名同時計算・Excel出力")
+st.title("📊 社会保険料計算ツール【完全版】")
+st.caption("令和8年度 協会けんぽ対応｜従業員負担＋事業主負担・人件費総額・Excel出力")
 
 with st.spinner("協会けんぽから料率データを取得中..."):
     try:
@@ -140,7 +140,7 @@ if st.button("　計算する　", type="primary", use_container_width=True):
     st.session_state["result_may"] = calc_dataframe(df_clean, rates, shien_kin=True)
 
 # ============================================================
-# 結果表示（session_state に保存されている間は常に表示）
+# 結果表示
 # ============================================================
 if "result_apr" in st.session_state:
     result_apr = st.session_state["result_apr"]
@@ -151,8 +151,17 @@ if "result_apr" in st.session_state:
                 "厚生年金料(本人)", "雇用保険料(本人)",
                 "控除合計(本人)", "手取り概算"]
 
-    st.subheader("📋 計算結果：従業員負担（控除額・手取り）")
+    sha_cols = ["氏名", "標準報酬月額",
+                "健康保険料(会社)", "子育て支援金(会社)",
+                "厚生年金料(会社)", "雇用保険料(会社)",
+                "会社負担合計", "人件費総額"]
 
+    all_cols = ["氏名", "標準報酬月額",
+                "健康保険料(本人)", "子育て支援金(本人)", "厚生年金料(本人)", "雇用保険料(本人)", "控除合計(本人)", "手取り概算",
+                "健康保険料(会社)", "子育て支援金(会社)", "厚生年金料(会社)", "雇用保険料(会社)", "会社負担合計", "人件費総額"]
+
+    # ===== 従業員負担 =====
+    st.subheader("📋 計算結果①：従業員負担（控除額・手取り）")
     tab1, tab2 = st.tabs(
         ["4月支払い分（子育て支援金 なし）", "5月支払い分以降（子育て支援金 あり）"]
     )
@@ -169,18 +178,35 @@ if "result_apr" in st.session_state:
 
     st.divider()
 
-    # Excel出力
-    excel_bytes = to_excel(result_apr, result_may, emp_cols)
+    # ===== 事業主負担 =====
+    st.subheader("📋 計算結果②：事業主負担・人件費総額")
+    st.caption("⚠️ 事業主の雇用保険料率は毎年変更される可能性があります。厚労省公式資料でご確認ください。")
+
+    tab3, tab4 = st.tabs(
+        ["4月支払い分（子育て支援金 なし）", "5月支払い分以降（子育て支援金 あり）"]
+    )
+    with tab3:
+        show_table(result_apr, sha_cols)
+        c1, c2 = st.columns(2)
+        c1.metric("会社負担合計（全員）", f"{int(result_apr['会社負担合計'].sum()):,} 円")
+        c2.metric("人件費総額（全員）",   f"{int(result_apr['人件費総額'].sum()):,} 円")
+    with tab4:
+        show_table(result_may, sha_cols)
+        c1, c2 = st.columns(2)
+        c1.metric("会社負担合計（全員）", f"{int(result_may['会社負担合計'].sum()):,} 円")
+        c2.metric("人件費総額（全員）",   f"{int(result_may['人件費総額'].sum()):,} 円")
+
+    st.divider()
+
+    # ===== Excel出力（完全版） =====
+    excel_bytes = to_excel(result_apr, result_may, all_cols)
     st.download_button(
-        label="📥 Excelダウンロード",
+        label="📥 Excelダウンロード（完全版：従業員負担＋事業主負担）",
         data=excel_bytes,
-        file_name="社会保険料計算_令和8年度.xlsx",
+        file_name="社会保険料計算_令和8年度_完全版.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         use_container_width=True,
     )
-
-    st.divider()
-    st.info("💼 事業主負担・人件費総額も確認したい方は有料版をご利用ください。")
 
 # ============================================================
 # フッター注記
@@ -194,6 +220,7 @@ with st.expander("ℹ️ 計算の前提・注意事項"):
     - **子ども・子育て支援金**：標準報酬月額 × 0.23% ÷ 2（5月支払い分以降）
     - **厚生年金保険料**：標準報酬月額 × 18.3% ÷ 2（四捨五入）
     - **雇用保険料（本人）**：標準報酬月額 × 業種別料率（切り捨て）
+    - **雇用保険料（会社）**：毎年3月に自動更新（厚労省公式PDFより取得）
     - **端数処理**：健保・年金は50銭以上切り上げ、雇用保険は切り捨て
     - 本ツールの計算結果は参考値です。実務では必ず保険料額表でご確認ください。
     """)
