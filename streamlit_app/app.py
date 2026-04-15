@@ -18,9 +18,6 @@ from calculator import (
     calc_dataframe,
     PREFS,
     KOYO_RATES_WORKER,
-    KOYO_RATES_EMPLOYER,
-    KOYO_RATES_WORKER_DEFAULT,
-    load_koyo_rates_worker,
 )
 
 # ============================================================
@@ -33,39 +30,6 @@ st.set_page_config(
 )
 
 # ============================================================
-# パスワード認証（事業主負担の解放）
-# ============================================================
-
-def check_employer_password() -> bool:
-    """
-    事業主負担セクションのパスワード認証。
-    Streamlit Cloud の Secrets に app_password を設定してください。
-    ローカル開発時（Secrets未設定）はパスワードなしで解放。
-    """
-    # セッション内で認証済みならそのまま通す
-    if st.session_state.get("employer_unlocked", False):
-        return True
-
-    # Secrets からパスワードを取得（未設定ならローカル開発とみなし解放）
-    try:
-        correct_pw = st.secrets["app_password"]
-    except Exception:
-        return True  # ローカル開発時：パスワードなしで解放
-
-    with st.expander("🔑 事業主負担を表示する（有料機能）"):
-        st.caption("パスワードをお持ちの方は入力してください。")
-        pw_input = st.text_input("パスワード", type="password", key="pw_input")
-        if st.button("認証する", key="auth_btn"):
-            if pw_input == correct_pw:
-                st.session_state["employer_unlocked"] = True
-                st.rerun()
-            else:
-                st.error("パスワードが違います")
-
-    return False
-
-
-# ============================================================
 # 料率データ読み込み（1日キャッシュ）
 # ============================================================
 @st.cache_data(ttl=3600 * 24, show_spinner=False)
@@ -74,14 +38,26 @@ def load_rates():
 
 
 # ============================================================
+# テーブル表示（共通）
+# ============================================================
+def show_table(result: pd.DataFrame, cols: list):
+    fmt = {c: "{:,.0f}" for c in cols if c != "氏名"}
+    st.dataframe(
+        result[cols].style.format(fmt),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+
+# ============================================================
 # Excel出力
 # ============================================================
 def to_excel(df_apr: pd.DataFrame, df_may: pd.DataFrame,
-             cols_apr: list, cols_may: list) -> bytes:
+             cols: list) -> bytes:
     buf = io.BytesIO()
     with pd.ExcelWriter(buf, engine="openpyxl") as writer:
-        df_apr[cols_apr].to_excel(writer, index=False, sheet_name="4月支払い分")
-        df_may[cols_may].to_excel(writer, index=False, sheet_name="5月支払い分以降")
+        df_apr[cols].to_excel(writer, index=False, sheet_name="4月支払い分")
+        df_may[cols].to_excel(writer, index=False, sheet_name="5月支払い分以降")
 
     buf.seek(0)
     wb = load_workbook(buf)
@@ -103,6 +79,32 @@ def to_excel(df_apr: pd.DataFrame, df_may: pd.DataFrame,
     out = io.BytesIO()
     wb.save(out)
     return out.getvalue()
+
+
+# ============================================================
+# パスワード認証UI（事業主負担の解放）
+# ============================================================
+def show_password_form():
+    """
+    パスワード入力フォームを表示する。
+    認証成功時は session_state["employer_unlocked"] = True にして rerun。
+    """
+    try:
+        correct_pw = st.secrets["app_password"]
+    except Exception:
+        # Secrets 未設定（ローカル開発時）はそのまま解放
+        st.session_state["employer_unlocked"] = True
+        return
+
+    with st.expander("🔑 事業主負担を表示する（有料機能）"):
+        st.caption("パスワードをお持ちの方は入力してください。")
+        pw_input = st.text_input("パスワード", type="password", key="pw_input")
+        if st.button("認証する", key="auth_btn"):
+            if pw_input == correct_pw:
+                st.session_state["employer_unlocked"] = True
+                st.rerun()
+            else:
+                st.error("パスワードが違います")
 
 
 # ============================================================
@@ -163,7 +165,8 @@ edited_df = st.data_editor(
 st.divider()
 
 # ============================================================
-# 計算実行
+# 「計算する」ボタン
+# 押されたときだけ計算してセッションに保存する
 # ============================================================
 if st.button("　計算する　", type="primary", use_container_width=True):
 
@@ -174,75 +177,75 @@ if st.button("　計算する　", type="primary", use_container_width=True):
         st.warning("有効な従業員データを1名以上入力してください。")
         st.stop()
 
-    result_apr = calc_dataframe(df_clean, rates, shien_kin=False)
-    result_may = calc_dataframe(df_clean, rates, shien_kin=True)
+    # 計算結果をセッションに保存
+    # → パスワード認証で rerun されても結果が消えない
+    st.session_state["result_apr"] = calc_dataframe(df_clean, rates, shien_kin=False)
+    st.session_state["result_may"] = calc_dataframe(df_clean, rates, shien_kin=True)
 
-    # ========== 従業員負担（無料） ==========
-    st.subheader("📋 計算結果①：従業員負担（控除額・手取り）")
+# ============================================================
+# 計算結果の表示
+# ボタンブロックの外に出すことで rerun 後も表示を維持する
+# ============================================================
+if "result_apr" in st.session_state:
+
+    result_apr = st.session_state["result_apr"]
+    result_may = st.session_state["result_may"]
 
     emp_cols = ["氏名", "標準報酬月額",
                 "健康保険料(本人)", "子育て支援金(本人)",
                 "厚生年金料(本人)", "雇用保険料(本人)",
                 "控除合計(本人)", "手取り概算"]
 
+    # ===== 従業員負担（無料） =====
+    st.subheader("📋 計算結果①：従業員負担（控除額・手取り）")
+
     tab1, tab2 = st.tabs(
         ["4月支払い分（子育て支援金 なし）", "5月支払い分以降（子育て支援金 あり）"]
     )
-
-    def show_table(result, cols):
-        fmt = {c: "{:,.0f}" for c in cols if c != "氏名"}
-        st.dataframe(
-            result[cols].style.format(fmt),
-            use_container_width=True, hide_index=True,
-        )
-
     with tab1:
         show_table(result_apr, emp_cols)
         c1, c2 = st.columns(2)
-        c1.metric("控除合計（全員）",   f"{int(result_apr['控除合計(本人)'].sum()):,} 円")
+        c1.metric("控除合計（全員）",       f"{int(result_apr['控除合計(本人)'].sum()):,} 円")
         c2.metric("手取り概算合計（全員）", f"{int(result_apr['手取り概算'].sum()):,} 円")
-
     with tab2:
         show_table(result_may, emp_cols)
         c1, c2 = st.columns(2)
-        c1.metric("控除合計（全員）",   f"{int(result_may['控除合計(本人)'].sum()):,} 円")
+        c1.metric("控除合計（全員）",       f"{int(result_may['控除合計(本人)'].sum()):,} 円")
         c2.metric("手取り概算合計（全員）", f"{int(result_may['手取り概算'].sum()):,} 円")
 
-    # ========== 事業主負担（有料・パスワード認証後） ==========
     st.divider()
-    employer_unlocked = check_employer_password()
 
-    if employer_unlocked:
-        st.subheader("📋 計算結果②：事業主負担・人件費総額")
-        st.caption("⚠️ 事業主の雇用保険料率は毎年変更される可能性があります。厚労省公式資料でご確認ください。")
+    # ===== 事業主負担（パスワード認証後） =====
+    if st.session_state.get("employer_unlocked", False):
 
         sha_cols = ["氏名", "標準報酬月額",
                     "健康保険料(会社)", "子育て支援金(会社)",
                     "厚生年金料(会社)", "雇用保険料(会社)",
                     "会社負担合計", "人件費総額"]
 
+        st.subheader("📋 計算結果②：事業主負担・人件費総額")
+        st.caption("⚠️ 事業主の雇用保険料率は毎年変更される可能性があります。厚労省公式資料でご確認ください。")
+
         tab3, tab4 = st.tabs(
             ["4月支払い分（子育て支援金 なし）", "5月支払い分以降（子育て支援金 あり）"]
         )
-
         with tab3:
             show_table(result_apr, sha_cols)
             c1, c2 = st.columns(2)
             c1.metric("会社負担合計（全員）", f"{int(result_apr['会社負担合計'].sum()):,} 円")
             c2.metric("人件費総額（全員）",   f"{int(result_apr['人件費総額'].sum()):,} 円")
-
         with tab4:
             show_table(result_may, sha_cols)
             c1, c2 = st.columns(2)
             c1.metric("会社負担合計（全員）", f"{int(result_may['会社負担合計'].sum()):,} 円")
             c2.metric("人件費総額（全員）",   f"{int(result_may['人件費総額'].sum()):,} 円")
 
-        # Excel出力（事業主負担を含む完全版）
+        # Excel（完全版）
         st.divider()
-        all_cols = ["氏名", "標準報酬月額",
-                    "健康保険料(本人)", "子育て支援金(本人)", "厚生年金料(本人)", "雇用保険料(本人)", "控除合計(本人)", "手取り概算",
-                    "健康保険料(会社)", "子育て支援金(会社)", "厚生年金料(会社)", "雇用保険料(会社)", "会社負担合計", "人件費総額"]
-        excel_bytes = to_excel(result_apr, result_may, all_cols, all_cols)
+        all_cols = emp_cols + ["健康保険料(会社)", "子育て支援金(会社)",
+                               "厚生年金料(会社)", "雇用保険料(会社)",
+                               "会社負担合計", "人件費総額"]
+        excel_bytes = to_excel(result_apr, result_may, all_cols)
         st.download_button(
             label="📥 Excelダウンロード（完全版：従業員負担＋事業主負担）",
             data=excel_bytes,
@@ -252,9 +255,12 @@ if st.button("　計算する　", type="primary", use_container_width=True):
         )
 
     else:
-        # 未認証時：従業員のみExcel出力
+        # 未認証：パスワードフォームを表示
+        show_password_form()
+
+        # Excel（従業員のみ）
         st.divider()
-        excel_bytes = to_excel(result_apr, result_may, emp_cols, emp_cols)
+        excel_bytes = to_excel(result_apr, result_may, emp_cols)
         st.download_button(
             label="📥 Excelダウンロード（従業員負担のみ）",
             data=excel_bytes,
