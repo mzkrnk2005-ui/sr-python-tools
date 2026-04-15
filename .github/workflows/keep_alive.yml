@@ -1,0 +1,46 @@
+name: Streamlit スリープ防止
+
+on:
+  schedule:
+    # 5日ごと 9:00 JST（= UTC 00:00）に自動実行
+    # Streamlit は約7日アクセスがないとスリープするため、5日間隔で予防
+    - cron: '0 0 */5 * *'
+  # 手動でも実行可能（初回テスト用）
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 無料版（従業員のみ）にアクセス
+        # ▼▼▼ Streamlit Cloud にデプロイ後、実際のURLに書き換えてください ▼▼▼
+        run: |
+          URL="https://YOUR-FREE-APP-NAME.streamlit.app"
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 60 "$URL" || echo "000")
+          echo "ステータスコード: $STATUS"
+          if [ "$STATUS" = "000" ]; then
+            echo "⚠️  アクセス失敗（スリープから起動中の可能性あり）"
+          else
+            echo "✅ アクセス成功（スリープ防止済み）"
+          fi
+
+      - name: 完全版（事業主負担あり）にアクセス
+        # ▼▼▼ Streamlit Cloud にデプロイ後、実際のURLに書き換えてください ▼▼▼
+        run: |
+          URL="https://YOUR-FULL-APP-NAME.streamlit.app"
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 60 "$URL" || echo "000")
+          echo "ステータスコード: $STATUS"
+          if [ "$STATUS" = "000" ]; then
+            echo "⚠️  アクセス失敗（スリープから起動中の可能性あり）"
+          else
+            echo "✅ アクセス成功（スリープ防止済み）"
+          fi
+
+# ============================================================
+# ⚠️ デプロイ後にやること
+# ============================================================
+# 1. Streamlit Cloud でアプリを公開する
+# 2. 発行されたURLを上の YOUR-xxx-APP-NAME.streamlit.app に書き換える
+# 3. このファイルをGitHubにコミットする
+# ============================================================

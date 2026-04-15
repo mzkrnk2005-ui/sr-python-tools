@@ -1,0 +1,106 @@
+name: 雇用保険料率 年次自動更新
+
+on:
+  schedule:
+    # 毎年3月1日 10:00 JST（= UTC 01:00）に自動実行
+    - cron: '0 1 1 3 *'
+  # 手動でも実行できるようにしておく（テスト用）
+  workflow_dispatch:
+
+permissions:
+  contents: write  # JSONをコミット・プッシュするために必要
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: リポジトリをチェックアウト
+        uses: actions/checkout@v4
+
+      - name: Python セットアップ
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 依存ライブラリをインストール
+        run: pip install requests beautifulsoup4 pdfplumber
+
+      - name: 料率更新スクリプトを実行
+        id: update
+        run: python update_koyo_rates.py
+        # 失敗してもメール送信ステップに進めるよう continue-on-error を設定
+        continue-on-error: true
+
+      - name: 更新されたJSONをコミット・プッシュ
+        if: steps.update.outcome == 'success'
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "*.json"
+          # 変更がある場合だけコミット（差分がなければスキップ）
+          git diff --staged --quiet || git commit -m "自動更新: 雇用保険料率を更新しました [skip ci]"
+          git push
+
+      # ========== 成功メール ==========
+      - name: 成功メールを送信
+        if: steps.update.outcome == 'success'
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          username: ${{ secrets.GMAIL_ADDRESS }}
+          password: ${{ secrets.GMAIL_APP_PASSWORD }}
+          to: ${{ secrets.GMAIL_ADDRESS }}
+          from: 社会保険ツール 自動通知 <${{ secrets.GMAIL_ADDRESS }}>
+          subject: "✅【社会保険ツール】雇用保険料率の更新が完了しました"
+          body: |
+            雇用保険料率の自動更新が完了しました。
+
+            ■ 更新内容
+              JSONファイルをGitHubにコミットしました。
+              Streamlitアプリに自動反映されています。
+
+            ■ 確認方法
+              GitHubリポジトリの「雇用保険料率_最新.json」をご確認ください。
+              https://github.com/mzkrnk2005-ui/sr-python-tools
+
+            ■ 実行日時
+              ${{ github.run_started_at }}
+
+            ※このメールは自動送信です。返信は不要です。
+
+      # ========== 失敗メール ==========
+      - name: 失敗メールを送信
+        if: steps.update.outcome == 'failure'
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          username: ${{ secrets.GMAIL_ADDRESS }}
+          password: ${{ secrets.GMAIL_APP_PASSWORD }}
+          to: ${{ secrets.GMAIL_ADDRESS }}
+          from: 社会保険ツール 自動通知 <${{ secrets.GMAIL_ADDRESS }}>
+          subject: "❌【社会保険ツール】雇用保険料率の更新に失敗しました（手動確認が必要）"
+          body: |
+            雇用保険料率の自動更新に失敗しました。
+            手動での確認・更新をお願いします。
+
+            ■ 考えられる原因
+              ・厚労省ページのURL・構造が変わった
+              ・PDFの書式が変わり、料率を読み取れなかった
+              ・ネットワークエラー
+
+            ■ 手動更新の手順
+              1. 以下のページで最新の料率PDFを確認
+                 https://www.mhlw.go.jp/stf/seisakunitsuite/bunya/0000108634.html
+              2. PDFから「一般・農林水産・建設」の労働者負担料率を確認
+              3. 「雇用保険料率_最新.json」を手動で編集してGitHubにコミット
+
+            ■ 実行日時
+              ${{ github.run_started_at }}
+
+            ■ GitHubのActionsログ（詳細エラー確認）
+              https://github.com/mzkrnk2005-ui/sr-python-tools/actions
+
+            ※このメールは自動送信です。
